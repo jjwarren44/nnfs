@@ -7,6 +7,7 @@ import gzip
 import struct
 import cv2
 import pickle
+import copy
 
 
 nnfs.init()
@@ -938,6 +939,38 @@ class Model:
         with open(path, 'rb') as f:
             self.set_parameters(pickle.load(f))
 
+    # Saves the model
+    def save(self, path):
+        # Make a deep copy (more than just first level of object's properties) of current model instance
+        model = copy.deepcopy(self)
+
+        # Reset accumulated values in loss and accuracy objects
+        model.loss.new_pass()
+        model.accuracy.new_pass()
+
+        # Remove data from input layer and gradients from the loss object
+        model.input_layer.__dict__.pop('output', None)
+        model.loss.__dict__.pop('dvalues', None)
+
+        # For each layer remove inputs, output, and dvalues properties
+        for layer in model.layers:
+            for property in ['inputs', 'outputs', 'dvalues', 'dweights', 'dbiases']:
+                layer.__dict__.pop(property, None)
+
+        # Save the model in binary-write mode
+        with open(path, 'wb') as f:
+            pickle.dump(model, f)
+
+
+
+    # Loads and returns a model
+    @staticmethod
+    def load(path):
+        # Open a file in the binary-read mode, load a model
+        with open(path, 'rb') as f:
+            model = pickle.load(f)
+
+        return model
 
 
 
@@ -992,7 +1025,7 @@ X = (X.reshape(X.shape[0], -1).astype(np.float16) - 127.5) / 127.5
 X_test = (X_test.reshape(X_test.shape[0], -1).astype(np.float16) - 127.5) / 127.5
 
 '''
-# SAVING PARAMETERS
+# SAVING MODEL & PARAMETERS 
 
 # Instantiate the model
 model = Model()
@@ -1020,10 +1053,13 @@ model.train(X, y, validation_data=(X_test, y_test), epochs=10, batch_size=128, p
 model.evaluate(X_test, y_test)
 
 model.save_parameters('fashion_mnist.parms')
+model.save('fashion_mnist.model')
+'''
+
+
+# LOADING MODELS & PARAMETERS
 
 '''
-# LOADING PARAMETERS
-
 model = Model()
 
 # Add layers
@@ -1043,9 +1079,12 @@ model.set(
 
 # Finalize model
 model.finalize()
-
+'''
 # Load model parameters instead of training it
-model.load_parameters('fashion_mnist.parms')
+#model.load_parameters('fashion_mnist.parms')
+
+# Load the model instead of training one
+model = Model.load('fashion_mnist.model')
 
 # Evaluate the model
 model.evaluate(X_test, y_test)
