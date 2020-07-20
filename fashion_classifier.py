@@ -961,7 +961,38 @@ class Model:
         with open(path, 'wb') as f:
             pickle.dump(model, f)
 
+    def predict(self, X, *, batch_size=None):
 
+        # Default value if batch size not being set
+        prediction_steps = 1
+
+        # Calculate number of steps
+        if batch_size is not None:
+            prediction_steps = len(X) // batch_size
+
+            # add 1 to include last minibatch if dividing rounded down
+            if prediction_steps * batch_size < len(X):
+                prediction_steps += 1
+
+        # Model outputs
+        output = []
+
+        # Iterate over steps
+        for step in range(prediction_steps):
+            # If batch size is not set - train using one step and full dataset
+            if batch_size is None:
+                minibatch_X = X
+            else:
+                minibatch_X = X[step*batch_size : (step+1)*batch_size]
+
+            # Forward pass
+            minibatch_output = self.forward(minibatch_X, training=False)
+
+            # Append batch prediction to the list of predictions
+            output.append(minibatch_output)
+
+        # Stack results vertically and return
+        return np.vstack(output)
 
     # Loads and returns a model
     @staticmethod
@@ -1056,35 +1087,44 @@ model.save_parameters('fashion_mnist.parms')
 model.save('fashion_mnist.model')
 '''
 
+# LOADING A MODEL AND PREDICTING ON NEW DATA
 
-# LOADING MODELS & PARAMETERS
+fashion_mnist_labels = {
+    0: 'T-shirt/top',
+    1: 'Trouser',
+    2: 'Pullover',
+    3: 'Dress',
+    4: 'Coat',
+    5: 'Sandal',
+    6: 'Shirt',
+    7: 'Sneaker',
+    8: 'Bag',
+    9: 'Ankle boot'
+}
 
-'''
-model = Model()
+# Read in image as grayscale
+image_data = cv2.imread('fashion_mnist_images/new/tshirt.png', cv2.IMREAD_GRAYSCALE)
 
-# Add layers
-model.add(Layer_Dense(X.shape[1], 128))
-model.add(Activation_ReLU())
-model.add(Layer_Dense(128, 128))
-model.add(Activation_ReLU())
-model.add(Layer_Dense(128, 10))
-model.add(Activation_Softmax())
+# Resize image to 28x28
+image_data = cv2.resize(image_data, (28,28))
 
-# Set loss and accuracy objects
-# We do not set optimizer object since the model is already trained
-model.set(
-    loss=Loss_CategoricalCrossentropy(),
-    accuracy=Accuracy_Categorical()
-)
+# Invert image colors to match training data
+image_data = 255 - image_data
 
-# Finalize model
-model.finalize()
-'''
-# Load model parameters instead of training it
-#model.load_parameters('fashion_mnist.parms')
+# Reshape the data to a 1x784 array
+# and squeeze values between -1 and 1
+image_data = (image_data.reshape(1, -1).astype(np.float32) - 127.5) / 127.5
 
-# Load the model instead of training one
+# Load the model
 model = Model.load('fashion_mnist.model')
 
-# Evaluate the model
-model.evaluate(X_test, y_test)
+# Predict on the image
+predictions = model.predict(image_data)
+
+# Get predictions instead of confidence levels
+predictions = model.output_layer_activation.predictions(predictions)
+
+# Get the label for the prediction
+prediction = fashion_mnist_labels[predictions[0]]
+
+print(prediction)
