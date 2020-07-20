@@ -1,2 +1,0 @@
-
-[SUCCESS] 07/16/2020 09:38:42 Material Master uploaded to MS SQL Server Dev - KC_SC.dbo.SC_MATRL_MASTR

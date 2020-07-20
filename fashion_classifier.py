@@ -1,4 +1,3 @@
-
 import numpy as np
 import nnfs
 import os
@@ -7,6 +6,8 @@ import urllib.request
 import gzip
 import struct
 import cv2
+import pickle
+
 
 nnfs.init()
 
@@ -60,6 +61,16 @@ class Layer_Dense:
 
         # Gradient on values
         self.dvalues = np.dot(dvalues, self.weights.T)
+
+    # Method to retrieve layer parameters
+    def get_parameters(self):
+        return self.weights, self.biases
+
+    # Set weights and biases in a layer instance
+    def set_parameters(self, weights, biases):
+        self.weights = weights
+        self.biases = biases
+
 
 
 # Dropout
@@ -665,10 +676,15 @@ class Model:
         self.layers.append(layer)
 
     # Set loss, optimizer and accuracy
-    def set(self, *, loss, optimizer, accuracy):
-        self.loss = loss
-        self.optimizer = optimizer
-        self.accuracy = accuracy
+    def set(self, *, loss=None, optimizer=None, accuracy=None):
+        if loss is not None:
+            self.loss = loss
+
+        if optimizer is not None:
+            self.optimizer = optimizer
+
+        if accuracy is not None:
+            self.accuracy = accuracy
 
     # Finalize the model
     def finalize(self):
@@ -710,9 +726,10 @@ class Model:
                 self.trainable_layers.append(self.layers[i])
 
             # Update loss object with trainable layers
-            self.loss.remember_trainable_layers(
-                self.trainable_layers
-            )
+            if self.loss is not None:
+                self.loss.remember_trainable_layers(
+                    self.trainable_layers
+                )
 
     # Train the model
     def train(self, X, y, *, epochs=1, batch_size=None, print_every=1, validation_data=None):
@@ -804,39 +821,14 @@ class Model:
             # If there is the validation data
             if validation_data is not None:
 
-                # Reset accumulated values in loss and accuracy objects
-                self.loss.new_pass()
-                self.accuracy.new_pass()
-
-                # Iterate over steps
-                for step in range(validation_steps):
-
-                    # If batch size is not set - train using one step and full dataset
-                    if batch_size is None:
-                        batch_X = X_val
-                        batch_y = y_val
-
-                    # Otherwise slice a batch
-                    else:
-                        batch_X = X_val[step*batch_size:(step+1)*batch_size]
-                        batch_y = y_val[step*batch_size:(step+1)*batch_size]
-
-                    # Perform the forward pass
-                    output = self.forward(batch_X, training=False)
-
-                    # Calculate the loss
-                    self.loss.calculate(output, batch_y)
-
-                    # Get predictions and calculate an accuracy
-                    predictions = self.output_layer_activation.predictions(output)
-                    self.accuracy.calculate(predictions, batch_y)
-
-                # Get and print validation loss and accuracy
-                validation_loss = self.loss.calculate_accumulated()
-                validation_accuracy = self.accuracy.calculate_accumulated()
-
-                # Print a summary
-                print(f'validation, acc: {validation_accuracy:.3f}, loss: {validation_loss:.3f}')
+                # Evaluate the model
+                # *validation_data unpacks the validation data into X_val and y_val
+                # Ex:
+                # def test(n1, n2):
+                #   print(n1, n2)
+                # a = (1,2)
+                # test(*a)
+                self.evaluate(*validation_data, batch_size=batch_size)
 
     # Performs forward pass
     def forward(self, X, training):
@@ -868,50 +860,83 @@ class Model:
         for layer in reversed(self.layers):
             layer.backward(layer.next.dvalues)
 
-    # Evaluate the model after training
+    # Evaluates the model using passed in dataset
     def evaluate(self, X_val, y_val, *, batch_size=None):
-        # Defaul value if batch size is not set
+
+        # Default value if batch size is not being set
         validation_steps = 1
 
         # Calculate number of steps
         if batch_size is not None:
             validation_steps = len(X_val) // batch_size
-
-            # Add one if division rounded down
+            # Dividing rounds down. If there are some remaining data, but nor full minibatch, this won't include it
+            # Add `1` to include this not full minibatch
             if validation_steps * batch_size < len(X_val):
                 validation_steps += 1
 
-            # Reset accumulated values in loss and accuracy objects
-            self.loss.new_pass()
-            self.accuracy.new_pass()
+        # Reset accumulated values in loss and accuracy objects
+        self.loss.new_pass()
+        self.accuracy.new_pass()
 
-            # Iterate over steps
-            for step in range(validation_steps):
-                # If batch size is not set - train using one step and full dataset
-                if batch_size is None:
-                    minibatch_X = X_val
-                    minibatch_y = y_val
+        # Iterate over steps
+        for step in range(validation_steps):
 
-                else: # Otherwise slice a batch
-                    minibatch_X = X_val[step*batch_size : (step+1)*batch_size]
-                    minibatch_y = y_val[step*batch_size : (step+1)*batch_size]
+            # If batch size is not set - train using one step and full dataset
+            if batch_size is None:
+                minibatch_X = X_val
+                minibatch_y = y_val
 
-                # Perform forward pass
-                output = self.forward(minibatch_X, training=False)
+            # Otherwise slice a batch
+            else:
+                minibatch_X = X_val[step*batch_size:(step+1)*batch_size]
+                minibatch_y = y_val[step*batch_size:(step+1)*batch_size]
 
-                # Calculate the loss
-                self.loss.calculate(output, minibatch_y)
+            # Perform the forward pass
+            output = self.forward(minibatch_X, training=False)
 
-                # Get predictions and calculate an accuracy
-                predictions = self.output_layer_activation.predictions(output)
-                self.accuracy.calculate(predictions, minibatch_y)
+            # Calculate the loss
+            self.loss.calculate(output, minibatch_y)
 
-            # Get and print validation loss and accuracy
-            validation_loss = self.loss.calculate_accumulated()
-            validation_accuracy = self.accuracy.calculate_accumulated()
+            # Get predictions and calculate an accuracy
+            predictions = self.output_layer_activation.predictions(output)
+            self.accuracy.calculate(predictions, minibatch_y)
 
-            # Print a summary
-            print(f'validation, acc: {validation_accuracy:.3f}, loss: {validation_loss:.3f}')
+        # Get and print validation loss and accuracy
+        validation_loss = self.loss.calculate_accumulated()
+        validation_accuracy = self.accuracy.calculate_accumulated()
+
+        # Print a summary
+        print(f'validation, acc: {validation_accuracy:.3f}, loss: {validation_loss:.3f}')
+
+
+    # Get all traininable layers' parameters and store in a list
+    def get_parameters(self):
+        # Create a list for parameters
+        parameters = []
+
+        # Iterate trainable layers and get their parameters
+        for layer in self.trainable_layers:
+            parameters.append(layer.get_parameters())
+
+        return parameters
+
+    # Set all trainable layers' parameters 
+    def set_parameters(self, parameters):
+        # Iterate over the parameters and layers and update each layers with each set of the parameters
+        for parameter_set, layer in zip(parameters, self.trainable_layers):
+            layer.set_parameters(*parameter_set)
+
+    # Saves the parameters to a file
+    def save_parameters(self, path):
+        # Open a file in the binary-write mode and save parameters
+        with open(path, 'wb') as f:
+            pickle.dump(self.get_parameters(), f)
+
+    # Loads weights/biases and updates a model instance with them
+    def load_parameters(self, path):
+        # Open file in binary-read mode, load weights and update trainable layers
+        with open(path, 'rb') as f:
+            self.set_parameters(pickle.load(f))
 
 
 
@@ -966,21 +991,24 @@ y = y[keys]
 X = (X.reshape(X.shape[0], -1).astype(np.float16) - 127.5) / 127.5
 X_test = (X_test.reshape(X_test.shape[0], -1).astype(np.float16) - 127.5) / 127.5
 
+'''
+# SAVING PARAMETERS
+
 # Instantiate the model
 model = Model()
 
 # Add layers
-model.add(Layer_Dense(X.shape[1], 512))
+model.add(Layer_Dense(X.shape[1], 128))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(512, 512))
+model.add(Layer_Dense(128, 128))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(512, 10))
+model.add(Layer_Dense(128, 10))
 model.add(Activation_Softmax())
 
 # Set loss, optimizer and accuracy objects
 model.set(
     loss=Loss_CategoricalCrossentropy(),
-    optimizer=Optimizer_Adam(decay=5e-7),
+    optimizer=Optimizer_Adam(decay=1e-7),
     accuracy=Accuracy_Categorical()
 )
 
@@ -989,3 +1017,35 @@ model.finalize()
 
 # Train the model
 model.train(X, y, validation_data=(X_test, y_test), epochs=10, batch_size=128, print_every=100)
+model.evaluate(X_test, y_test)
+
+model.save_parameters('fashion_mnist.parms')
+
+'''
+# LOADING PARAMETERS
+
+model = Model()
+
+# Add layers
+model.add(Layer_Dense(X.shape[1], 128))
+model.add(Activation_ReLU())
+model.add(Layer_Dense(128, 128))
+model.add(Activation_ReLU())
+model.add(Layer_Dense(128, 10))
+model.add(Activation_Softmax())
+
+# Set loss and accuracy objects
+# We do not set optimizer object since the model is already trained
+model.set(
+    loss=Loss_CategoricalCrossentropy(),
+    accuracy=Accuracy_Categorical()
+)
+
+# Finalize model
+model.finalize()
+
+# Load model parameters instead of training it
+model.load_parameters('fashion_mnist.parms')
+
+# Evaluate the model
+model.evaluate(X_test, y_test)
